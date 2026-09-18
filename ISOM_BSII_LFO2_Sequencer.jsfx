@@ -1,0 +1,326 @@
+desc: ISOM BSII LFO2 Step Sequencer v0.4
+tags: MIDI sequencer
+author: ISoM
+version: 0.4
+// Waveform CC89; Speed CC19 or Sync NRPN91. -1 = hold; 0 is a real value.
+slider1:1<0,1,1{8,16}>Steps
+slider2:1<0,3,1{1/4,1/8,1/16,1/32}>Step division
+slider3:1<1,16,1>MIDI channel
+slider4:0<0,1,1{Speed,Sync}>LFO2 mode
+slider5:1<0,1,1{Off,On}>Send MIDI Clock + Start/Stop
+
+@init
+ext_noinit = 1;
+ext_tail_size = -1;
+values = 0;
+!initialized ? (
+  i = 0;
+  loop(32, values[i] = -1; i += 1;);
+  initialized = 1;
+);
+sync_values = 64;
+!sync_initialized ? (
+  i = 0; loop(16, sync_values[i] = -1; i += 1;);
+  sync_initialized = 1;
+);
+mode_sent = -1;
+channel_sent = -1;
+last_tick = -1000000000;
+active_step = -1;
+selected = -1;
+drag_cell = -1;
+clock_running = 0;
+realtime_buf = 512;
+last_clock_tick = -1000000000;
+expected_clock_beat = -1000000000;
+strcpy(#entry, "");
+function send_realtime(status, sample_offset) (
+  // Real-time messages have exactly one byte, not a padded CC message.
+  realtime_buf[0] = status;
+  midisend_buf(sample_offset, realtime_buf, 1);
+);
+function send_nrpn(number, data, sample_offset) local(status) (
+  status = $xB0 + slider3 - 1;
+  midisend(sample_offset, status, 99, 0);
+  midisend(sample_offset, status, 98, number);
+  midisend(sample_offset, status, 6, data);
+  midisend(sample_offset, status, 38, 0);
+  // Clear NRPN selection so unrelated data-entry CCs cannot change this target.
+  midisend(sample_offset, status, 99, 127);
+  midisend(sample_offset, status, 98, 127);
+);
+function emit_tick(tick, sample_offset) local(index, status, wave, speed) (
+  index = ((tick % steps) + steps) % steps;
+  status = $xB0 + slider3 - 1;
+  wave = values[index];
+  mode_sent != slider4 || channel_sent != slider3 ? (
+    send_nrpn(92, slider4, sample_offset);
+    mode_sent = slider4; channel_sent = slider3;
+  );
+  speed = slider4 == 0 ? values[16 + index] : sync_values[index];
+  wave >= 0 ? midisend(sample_offset, status, 89, min(3, max(0, floor(wave))));
+  speed >= 0 ? (
+    slider4 == 0 ? midisend(sample_offset, status, 19, min(127, max(0, floor(speed)))) :
+      send_nrpn(91, min(34, max(0, floor(speed))), sample_offset);
+  );
+  active_step = index;
+  last_tick = tick;
+);
+
+@slider
+steps = slider1 == 0 ? 8 : 16;
+step_beats = 1 / (2 ^ slider2);
+last_tick = -1000000000;
+
+@serialize
+// Persist waveform, Speed and Sync sequences, including empty (-1) cells.
+// Slider settings are saved by REAPER automatically.
+file_mem(0, values, 32);
+// Append new state; projects from v0.1/v0.2 contain only the first 32 values.
+file_avail(0) != 0 ? file_mem(0, sync_values, 16) : (
+  i = 0; loop(16, sync_values[i] = -1; i += 1;);
+);
+initialized = 1;
+sync_initialized = 1;
+
+@block
+// Replace incoming clock/transport when generating our own clock.
+// Notes, CC, SysEx and other messages pass through.
+while ((message_length = midirecv_buf(offset, 1024, 65536)) > 0) (
+  incoming_status = 1024[0];
+  !(slider5 && (incoming_status == $xF8 || incoming_status == $xFA ||
+    incoming_status == $xFB || incoming_status == $xFC)) ?
+      midisend_buf(offset, 1024, message_length);
+);
+// MIDI Clock: 24 pulses per quarter note, scheduled at sample offsets.
+clock_wanted = slider5 && (play_state & 1) && tempo > 0;
+clock_wanted ? (
+  clock_bps = tempo / (60 * srate);
+  !clock_running ? (
+    send_realtime($xFA, 0);
+    last_clock_tick = -1000000000;
+  ) : (
+    // Follow loop/seek jumps without restarting the hardware at each loop.
+    abs(beat_position - expected_clock_beat) > clock_bps * 2 ?
+      last_clock_tick = -1000000000;
+  );
+  // Include a pulse whose rounded sample falls exactly at this block start.
+  clock_tick = ceil((beat_position - clock_bps) * 24 + 0.000000001);
+  clock_offset = max(0, ceil((clock_tick / 24 - beat_position) / clock_bps - 0.000001));
+  while (clock_offset < samplesblock) (
+    clock_tick != last_clock_tick ? (
+      send_realtime($xF8, clock_offset);
+      last_clock_tick = clock_tick;
+    );
+    clock_tick += 1;
+    clock_offset = max(0, ceil((clock_tick / 24 - beat_position) / clock_bps - 0.000001));
+  );
+  expected_clock_beat = beat_position + samplesblock * clock_bps;
+) : (
+  clock_running ? send_realtime($xFC, 0);
+  last_clock_tick = -1000000000;
+);
+clock_running = clock_wanted;
+play_state & 1 && tempo > 0 ? (
+  beats_per_sample = tempo / (60 * srate);
+  tick = floor(beat_position / step_beats + 0.000000001);
+  tick != last_tick ? emit_tick(tick, 0);
+  next_tick = tick + 1;
+  next_offset = max(0, ceil((next_tick * step_beats - beat_position) / beats_per_sample - 0.000001));
+  while (next_offset < samplesblock) (
+    emit_tick(next_tick, next_offset);
+    next_tick += 1;
+    next_offset = max(0, ceil((next_tick * step_beats - beat_position) / beats_per_sample - 0.000001));
+  );
+) : (
+  last_tick = -1000000000;
+  mode_sent = -1; channel_sent = -1;
+  active_step = -1;
+);
+
+@gfx 1000 390
+function lane_get(cell) (
+  cell >= 16 && slider4 == 1 ? sync_values[cell - 16] : values[cell];
+);
+function lane_set(cell, value) (
+  cell >= 16 && slider4 == 1 ? sync_values[cell - 16] = value : values[cell] = value;
+);
+function sync_label(value) (
+  // Novation's 35-entry Sync Values Table, ordered slowest to fastest.
+  strcpy(#sync_names, "16bar|12bar|42b|9bar|8bar|30b|7bar|6bar|21.3b|5bar|18.7b|18b|4bar|13.3b|3bar|10.7b|2bar|6b|5.3b|1bar|3b|2.7b|1/2|1/4D|1.3b|1/4|1/8D|1/4T|1/8|1/16D|1/8T|1/16|1/16T|1/32|1/32T");
+  p = 0; n = 0; strcpy(#sync_text, "");
+  while (n < value && p < strlen(#sync_names)) (
+    str_getchar(#sync_names, p) == 124 ? n += 1;
+    p += 1;
+  );
+  while (p < strlen(#sync_names) && str_getchar(#sync_names, p) != 124) (
+    strcat(#sync_text, sprintf(#char, "%c", str_getchar(#sync_names, p)));
+    p += 1;
+  );
+);
+function commit_entry() local(limit) (
+  selected >= 0 && strlen(#entry) > 0 ? (
+    limit = selected < 16 ? 3 : (slider4 == 1 ? 34 : 127);
+    match("%d", #entry, entered);
+    lane_set(selected, min(limit, max(0, entered)));
+  );
+  strcpy(#entry, "");
+);
+
+gfx_clear = 0x191512;
+gfx_setfont(1, "DejaVu Sans", 16);
+gfx_set(0.9, 0.92, 0.95);
+gfx_x = 16; gfx_y = 12;
+gfx_drawstr("BSII / LFO2 STEP SEQUENCER");
+mode_hover = mouse_x >= 354 && mouse_x < 472 && mouse_y >= 8 && mouse_y < 34;
+mode_hover && (mouse_cap & 1) && !(previous_cap & 1) ? (
+  commit_entry(); slider4 = 1 - slider4; sliderchange(slider4); slider_automate(slider4);
+  selected = -1; drag_cell = -1;
+);
+// A mode change cancels pending UI edits; each mode has its own lower sequence.
+ui_mode != slider4 ? (strcpy(#entry, ""); selected = -1; drag_cell = -1; ui_mode = slider4;);
+mode_hover ? gfx_set(0.3, 0.36, 0.42) : gfx_set(0.2, 0.25, 0.3);
+gfx_rect(354, 8, 118, 26);
+gfx_set(0.94, 0.95, 0.97); gfx_x = 363; gfx_y = 12;
+gfx_drawstr(slider4 == 0 ? "Mode: Speed" : "Mode: Sync");
+gfx_x = 16; gfx_y = 38;
+gfx_set(0.6, 0.65, 0.72);
+gfx_drawstr("Waveform / Sync: click to cycle | Lower row: type + Enter | Drag bars | Right click: empty");
+
+// Buttons act once per mouse press and include hidden steps 9-16.
+button_x = max(484, gfx_w - 196);
+reset_hover = mouse_x >= button_x && mouse_x < button_x + 82 && mouse_y >= 8 && mouse_y < 34;
+random_hover = mouse_x >= button_x + 92 && mouse_x < button_x + 182 && mouse_y >= 8 && mouse_y < 34;
+(mouse_cap & 1) && !(previous_cap & 1) && (reset_hover || random_hover) ? (
+  strcpy(#entry, "");
+  selected = -1;
+  drag_cell = -1;
+  i = 0;
+  loop(16,
+    values[i] = reset_hover ? -1 : floor(rand(4));
+    reset_hover ? (
+      values[16 + i] = -1; sync_values[i] = -1;
+    ) : (
+      slider4 == 0 ? values[16 + i] = floor(rand(128)) : sync_values[i] = floor(rand(35));
+    );
+    i += 1;
+  );
+);
+reset_hover ? gfx_set(0.3, 0.36, 0.42) : gfx_set(0.2, 0.25, 0.3);
+gfx_rect(button_x, 8, 82, 26);
+random_hover ? gfx_set(0.22, 0.45, 0.38) : gfx_set(0.16, 0.33, 0.28);
+gfx_rect(button_x + 92, 8, 90, 26);
+gfx_set(0.94, 0.95, 0.97);
+gfx_x = button_x + 17; gfx_y = 12; gfx_drawstr("Reset");
+gfx_x = button_x + 103; gfx_y = 12; gfx_drawstr("Random");
+
+left = 158;
+top = 84;
+row_h = max(100, (gfx_h - 124) / 2);
+cell_w = max(12, (gfx_w - left - 16) / steps);
+bar_h = row_h - 48;
+
+// Number area starts editing; the lower area edits the vertical bar.
+hit_col = floor((mouse_x - left) / cell_w);
+hit_row = floor((mouse_y - top) / row_h);
+valid_hit = mouse_x >= left && hit_col < steps && hit_row >= 0 && hit_row < 2;
+left_down = mouse_cap & 1;
+right_down = mouse_cap & 2;
+valid_hit && right_down && !(previous_cap & 2) ? (
+  commit_entry();
+  selected = hit_row * 16 + hit_col;
+  lane_set(selected, -1);
+);
+valid_hit && left_down && !(previous_cap & 1) ? (
+  commit_entry();
+  selected = hit_row * 16 + hit_col;
+  mouse_y - top - hit_row * row_h >= 34 ? drag_cell = selected : (
+    hit_row == 0 ? values[selected] = (values[selected] + 1) % 4;
+    hit_row == 1 && slider4 == 1 ? lane_set(selected, (lane_get(selected) + 1) % 35);
+  );
+);
+left_down && drag_cell >= 0 ? (
+  drag_row = floor(drag_cell / 16);
+  limit = drag_row == 0 ? 3 : (slider4 == 1 ? 34 : 127);
+  fraction = min(1, max(0, (top + drag_row * row_h + row_h - 12 - mouse_y) / bar_h));
+  lane_set(drag_cell, floor(fraction * limit + 0.5));
+);
+!left_down ? drag_cell = -1;
+previous_cap = mouse_cap;
+
+key = gfx_getchar();
+while (key > 0) (
+  selected >= 0 ? (
+    selected >= 16 ? (
+      key >= 48 && key <= 57 && strlen(#entry) < 3 ? strcat(#entry, sprintf(#digit, "%c", key));
+    ) : (
+      key >= 48 && key <= 51 ? values[selected] = key - 48;
+    );
+    key == 13 ? commit_entry();
+    key == 27 ? strcpy(#entry, "");
+    key == 8 ? (
+      strlen(#entry) > 0 ? str_setlen(#entry, strlen(#entry) - 1) : lane_set(selected, -1);
+    );
+    key == 6579564 || key == 32 ? (lane_set(selected, -1); strcpy(#entry, ""););
+  );
+  key = gfx_getchar();
+);
+
+row = 0;
+loop(2,
+  y = top + row * row_h;
+  gfx_set(0.9, 0.92, 0.95);
+  gfx_x = 16; gfx_y = y + 8;
+  gfx_drawstr(row == 0 ? "LFO2 Waveform" : (slider4 == 0 ? "LFO2 Speed" : "LFO2 Sync"));
+  gfx_set(0.6, 0.65, 0.72);
+  gfx_x = 16; gfx_y = y + 34;
+  row == 0 ? strcpy(#label, "CC89 / 0 - 3") : (
+    slider4 == 0 ? strcpy(#label, "CC19 / 0 - 127") : strcpy(#label, "NRPN91 / 0-34");
+  );
+  gfx_drawstr(#label);
+  col = 0;
+  loop(steps,
+    idx = row * 16 + col;
+    x = left + col * cell_w;
+    val = lane_get(idx);
+    col == active_step ? gfx_set(0.18, 0.24, 0.29) : gfx_set(0.12, 0.14, 0.17);
+    gfx_rect(x + 2, y + 2, cell_w - 4, row_h - 4);
+    val >= 0 ? (
+      height = bar_h * val / (row == 0 ? 3 : (slider4 == 1 ? 34 : 127));
+      row == 0 ? gfx_set(0.25, 0.76, 0.66) : gfx_set(0.37, 0.62, 0.95);
+      gfx_rect(x + 7, y + row_h - 12 - height, max(1, cell_w - 14), max(2, height));
+    );
+    selected == idx ? (
+      gfx_set(0.95, 0.75, 0.32);
+      gfx_rect(x + 2, y + 2, cell_w - 4, row_h - 4, 0);
+    );
+    gfx_set(0.94, 0.95, 0.97);
+    gfx_x = x + 8; gfx_y = y + 10;
+    selected == idx && strlen(#entry) > 0 ? sprintf(#text, "%s_", #entry) : (
+      val < 0 ? strcpy(#text, "--") : (
+        row == 0 ? (
+          val == 0 ? strcpy(#text, "TRI") :
+          val == 1 ? strcpy(#text, "RAMP") :
+          val == 2 ? strcpy(#text, "SQR") : strcpy(#text, "S&H");
+        ) : (
+          slider4 == 1 ? (sync_label(val); strcpy(#text, #sync_text);) : sprintf(#text, "%d", val);
+        );
+      );
+    );
+    gfx_measurestr(#text, text_w, text_h);
+    text_w > cell_w - 12 ? gfx_setfont(1, "DejaVu Sans", max(9, 16 * (cell_w - 12) / text_w));
+    gfx_drawstr(#text);
+    gfx_setfont(1, "DejaVu Sans", 16);
+    row == 0 ? (
+      gfx_set(0.6, 0.65, 0.72);
+      gfx_x = x + 7; gfx_y = top - 22;
+      gfx_drawstr(sprintf(#text, "%02d", col + 1));
+    );
+    col += 1;
+  );
+  row += 1;
+);
+gfx_x = 16; gfx_y = top + 2 * row_h + 6;
+gfx_set(0.6, 0.65, 0.72);
+sprintf(#footer, "-- = hold | Pattern starts at beat 0 | MIDI Clock: %s | %.1f BPM", slider5 ? "ON" : "OFF", tempo);
+gfx_drawstr(#footer);
