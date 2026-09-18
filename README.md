@@ -102,4 +102,4 @@ The NRPN and division mappings are supported by the [BS2-Web source code](https:
 
 ## Watch the plugin in action
 
-[![Watch the ISOM Bass Station II LFO2 Sequencer video](video-thumbnail.svg)](https://www.youtube.com/watch?v=df0xSYBxgeQ)
+[![Watch the ISOM Bass Station II LFO2 Sequencer video on YouTube](video-thumbnail.png)](https://www.youtube.com/watch?v=df0xSYBxgeQ)
