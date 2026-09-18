@@ -100,12 +100,6 @@ The clock generator does not send Song Position Pointer. Starting playback from 
 
 The NRPN and division mappings are supported by the [BS2-Web source code](https://github.com/francoisgeorgy/BS2-Web/tree/master/src/bass-station-2). JSFX documentation: [MIDI functions](https://www.reaper.fm/sdk/js/midi.php).
 
-## Video
+## Watch the plugin in action
 
-<p align="center">
-  <a href="https://www.youtube.com/watch?v=df0xSYBxgeQ">
-    <img src="https://img.youtube.com/vi/df0xSYBxgeQ/hqdefault.jpg" alt="▶ Odtwórz film: ISOM Bass Station II LFO2 Sequencer">
-  </a>
-  <br>
-  <a href="https://www.youtube.com/watch?v=df0xSYBxgeQ"><strong>▶ Odtwórz film na YouTube</strong></a>
-</p>
+[![Watch the ISOM Bass Station II LFO2 Sequencer video](video-thumbnail.svg)](https://www.youtube.com/watch?v=df0xSYBxgeQ)
