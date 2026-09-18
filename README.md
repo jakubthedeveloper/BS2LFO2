@@ -1,6 +1,6 @@
 # ISOM Bass Station II LFO2 Sequencer
 
-A MIDI parameter sequencer for the **Novation Bass Station II**, built as a **JSFX plugin for REAPER**. It changes the LFO2 waveform and speed in steps synchronized with the DAW transport. In Sync mode, it selects the LFO rhythmic division instead of its free-running speed. Version: **0.4**.
+A MIDI parameter sequencer for the **Novation Bass Station II**, built as a **JSFX plugin for REAPER**. It changes the LFO2 waveform and speed in steps synchronized with the DAW transport. In Sync mode, it selects the LFO rhythmic division instead of its free-running speed.
 
 The plugin controls an external instrument over MIDI. It does not generate audio or notes: play notes from a MIDI item on the same track or from a keyboard. To hear the modulation, set an appropriate LFO2 modulation amount on the Bass Station II, for example its effect on the filter.
 
@@ -79,9 +79,7 @@ In Sync labels, `D` means dotted, `T` means triplet, `bar` means a bar, and `b` 
 
 ## Saving a project
 
-REAPER saves all 48 cells: 16 waveform, 16 Speed and 16 Sync values, including empty and hidden steps. It also saves the slider settings: step count, division, channel, mode and clock enablement. **Press Enter to confirm numeric entries before saving.**
-
-Older v0.2 projects retain their waveform and Speed sequences; the new Sync sequence starts empty. Saved state from v0.3 is compatible with v0.4. Saving the project stores the plugin settings; save the instrument patch separately.
+REAPER saves all 48 cells: 16 waveform, 16 Speed and 16 Sync values, including empty and hidden steps. It also saves the slider settings: step count, division, channel, mode and clock enablement. Saving the project stores the plugin settings; save the instrument patch separately.
 
 ## MIDI messages sent
 
@@ -99,8 +97,6 @@ The mode is sent at the start of playback and when the mode or channel changes. 
 ## Limitations and verification
 
 The clock generator does not send Song Position Pointer. Starting playback from any position sends Start, so the hardware arpeggiator/sequencer starts from its beginning. Looping or seeking during playback repositions the generator without sending Start again. Tempo is read once per audio buffer; continuous tempo ramps are approximated using the current buffer's tempo.
-
-For v0.4, the code structure and clock calculations were checked across 27 combinations of tempo, buffer size and sample rate, with no missing or duplicate pulses. A full v0.4 test in REAPER or on the instrument has not been performed. After installation, check both modes, several tempos, and saving and reopening a project.
 
 The NRPN and division mappings are supported by the [BS2-Web source code](https://github.com/francoisgeorgy/BS2-Web/tree/master/src/bass-station-2). JSFX documentation: [MIDI functions](https://www.reaper.fm/sdk/js/midi.php).
 
